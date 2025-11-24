@@ -5,30 +5,56 @@ import { useState } from 'react';
 import { InitialSetupForm } from '@/components/InitialSetupForm';
 import { DailyEntryForm } from '@/components/DailyEntryForm';
 import { ChartSection } from '@/components/ChartSection';
-import { useLocalStorageState } from '@/lib/useLocalStorage';
-import { DailyEntry, InitialSettings } from '@/types';
+import { AuthForm } from '@/components/AuthForm';
+import { useAuth } from '@/lib/useAuth';
+import { useDataStorage } from '@/lib/useDataStorage';
 
 type Tab = 'setup' | 'entry' | 'chart';
 
 export default function HomePage() {
+  const { user, isLoading: authLoading, signOut, isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('entry');
-  const [settings, setSettings] = useLocalStorageState<InitialSettings | null>(
-    'weight-app-initial-settings',
-    null
-  );
-  const [entries, setEntries] = useLocalStorageState<DailyEntry[]>(
-    'weight-app-daily-entries',
-    []
-  );
+  const [authSuccess, setAuthSuccess] = useState(false);
+
+  const {
+    settings,
+    entries,
+    isLoading: dataLoading,
+    updateSettings,
+    updateEntries,
+  } = useDataStorage(user?.id || null);
+
+  // 認証中は何も表示しない
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <div className="text-sm text-gray-500">読み込み中...</div>
+      </div>
+    );
+  }
+
+  // 未認証の場合はログインフォームを表示
+  if (!isAuthenticated) {
+    return <AuthForm onSuccess={() => setAuthSuccess(true)} />;
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
       {/* ヘッダー */}
       <header className="border-b border-gray-200 bg-white sticky top-0 z-40">
-        <div className="mx-auto max-w-7xl px-6 py-4">
+        <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
           <h1 className="text-xl font-normal tracking-wide text-gray-900">
             Body Track
           </h1>
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-gray-500">{user?.email || 'ユーザー'}</span>
+            <button
+              onClick={signOut}
+              className="btn-secondary text-xs px-4 py-1.5"
+            >
+              ログアウト
+            </button>
+          </div>
         </div>
       </header>
 
@@ -39,7 +65,7 @@ export default function HomePage() {
           <div className="hidden lg:grid lg:grid-cols-3 lg:gap-8">
             {/* 左: 日次記録 */}
             <div>
-              <DailyEntryForm entries={entries} onChange={setEntries} settings={settings} />
+              <DailyEntryForm entries={entries} onChange={updateEntries} settings={settings} />
             </div>
             {/* 中央: チャート */}
             <div>
@@ -47,7 +73,7 @@ export default function HomePage() {
             </div>
             {/* 右: 初期設定 */}
             <div>
-              <InitialSetupForm value={settings} onChange={setSettings} />
+              <InitialSetupForm value={settings} onChange={updateSettings} />
             </div>
           </div>
 
@@ -55,7 +81,7 @@ export default function HomePage() {
           <div className="lg:hidden">
             {activeTab === 'entry' && (
               <div className="transition-opacity duration-300">
-                <DailyEntryForm entries={entries} onChange={setEntries} settings={settings} />
+                <DailyEntryForm entries={entries} onChange={updateEntries} settings={settings} />
               </div>
             )}
             {activeTab === 'chart' && (
@@ -65,7 +91,7 @@ export default function HomePage() {
             )}
             {activeTab === 'setup' && (
               <div className="transition-opacity duration-300">
-                <InitialSetupForm value={settings} onChange={setSettings} />
+                <InitialSetupForm value={settings} onChange={updateSettings} />
               </div>
             )}
           </div>

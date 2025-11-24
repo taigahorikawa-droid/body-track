@@ -6,6 +6,12 @@ export type ChartPoint = {
   simulatedScore: number;
   actualScore?: number | null;
   plannedScore: number; // 計画上のスコア
+  actualWeight?: number | null;
+  simulatedWeight?: number;
+  plannedWeight?: number;
+  actualBodyFat?: number | null;
+  simulatedBodyFat?: number;
+  plannedBodyFat?: number;
 };
 
 export type ProgressComparison = {
@@ -103,7 +109,7 @@ function calculateWeeksUntilTarget(targetDate: string): number {
  * - ミフリン・セイントジョア式で基礎代謝（BMR）を計算
  * - 活動係数を使ってTDEE（総消費カロリー）を計算
  * - 目標達成日から週数を計算
- * - 安全な減量ペース（週0.5-1kg）を考慮
+ * - 安全な減量ペース（週0.5-1kg）と増量ペース（週0.25-0.5kg）を考慮
  * - カロリーが低すぎないようにBMRの1.2倍を下限に設定
  */
 export function computeCaloriePlan(input: PlanInput) {
@@ -119,18 +125,10 @@ export function computeCaloriePlan(input: PlanInput) {
   // 目標達成日までの週数を計算
   const weeks = calculateWeeksUntilTarget(input.targetDate);
 
-  const totalLoss =
-    input.goalWeight < input.currentWeight
-      ? input.currentWeight - input.goalWeight
-      : 0;
-
-  // 週あたりの減量目標（安全な範囲：0.5-1kg/週）
-  const weeklyLoss = totalLoss / weeks; // kg/週
-  const safeWeeklyLoss = Math.min(Math.max(weeklyLoss, 0.5), 1.0); // 0.5-1kg/週に制限
-  
-  // 週あたりのカロリー赤字（脂肪1kg ≒ 7700kcal）
-  const weeklyDeficit = safeWeeklyLoss * 7700; // kcal/週
-  const dailyDeficit = weeklyDeficit / 7; // kcal/日
+  // 体重の変化量を計算
+  const weightChange = input.goalWeight - input.currentWeight;
+  const isWeightLoss = weightChange < 0;
+  const isWeightGain = weightChange > 0;
 
   const gymDays = Math.max(0, Math.min(7, input.gymSessionsPerWeek));
   const restDays = 7 - gymDays;
@@ -138,32 +136,95 @@ export function computeCaloriePlan(input: PlanInput) {
   // ジム日の消費カロリーを考慮（ジム1時間あたり約300-600kcal）
   const gymCalorieBurn = input.gymSessionHours * 400; // 1時間あたり400kcal（中程度の運動）
 
-  // ジム日とオフ日で赤字を分配
-  let gymDeficitPerDay = 0;
-  let restDeficitPerDay = 0;
+  // 維持カロリー = TDEE（総消費カロリー）
+  // これは現在の体重を維持するために必要な1日の総消費カロリー
+  const maintenanceKcal = Math.round(tdee);
 
+  // 週単位で考える：
+  // 1. 週あたりの維持カロリー = TDEE × 7日
+  const weeklyMaintenance = tdee * 7;
+  
+  // 2. 週あたりのジム消費カロリー = ジム消費 × ジム日数
+  const weeklyGymBurn = gymCalorieBurn * gymDays;
+  
+  // 3. 週あたりの総消費カロリー = 維持カロリー + ジム消費
+  const weeklyTotalBurn = weeklyMaintenance + weeklyGymBurn;
+  
+  // 4. 週あたりの体重変化目標とカロリー調整を計算
+  let weeklyCalorieAdjustment = 0; // 赤字（減量）または黒字（増量）
+  
+  if (isWeightLoss) {
+    // 減量の場合
+    const totalLoss = Math.abs(weightChange);
+    const weeklyLoss = totalLoss / weeks; // kg/週
+    const safeWeeklyLoss = Math.min(Math.max(weeklyLoss, 0.5), 1.0); // 0.5-1kg/週に制限
+    // 週あたりのカロリー赤字（脂肪1kg ≒ 7700kcal）
+    weeklyCalorieAdjustment = -safeWeeklyLoss * 7700; // マイナス（赤字）
+  } else if (isWeightGain) {
+    // 増量の場合
+    const totalGain = weightChange;
+    const weeklyGain = totalGain / weeks; // kg/週
+    const safeWeeklyGain = Math.min(Math.max(weeklyGain, 0.25), 0.5); // 0.25-0.5kg/週に制限（安全な増量ペース）
+    // 週あたりのカロリー黒字（筋肉1kg ≒ 5500-7000kcal、脂肪も含めて約6000kcal）
+    weeklyCalorieAdjustment = safeWeeklyGain * 6000; // プラス（黒字）
+  }
+  // 体重維持の場合は weeklyCalorieAdjustment = 0 のまま
+  
+  // 5. 週あたりの目標カロリー = 総消費カロリー + カロリー調整（赤字または黒字）
+  const weeklyTargetCalories = weeklyTotalBurn + weeklyCalorieAdjustment;
+  
+  // 6. ジムありの日とジムなしの日で配分（週単位で考える）
+  // 基本的な考え方：
+  // - 維持するには：ジムなしの日 = TDEE、ジムありの日 = TDEE + ジム消費
+  // - 増量・減量の調整を週単位で配分
+  let gymDayTarget: number;
+  let restDayTarget: number;
+  
   if (gymDays > 0 && restDays > 0) {
-    // ジム日は運動で消費するので、食事からの赤字を少し減らす
-    gymDeficitPerDay = dailyDeficit * 0.4; // ジム日は40%
-    restDeficitPerDay = dailyDeficit * 0.6; // オフ日は60%
+    // 週単位で配分する方法：
+    // 1. まず、ジムなしの日の目標カロリーを計算
+    //    基本はTDEE、増減量の調整を配分
+    const dailyAdjustment = weeklyCalorieAdjustment / 7;
+    const restDayAdjustment = dailyAdjustment * 0.6; // ジムなしの日に60%配分
+    restDayTarget = Math.round(
+      clamp(tdee + restDayAdjustment, bmr * 1.2)
+    );
+    
+    // 2. 次に、ジムありの日の目標カロリーを計算
+    //    週の目標カロリーからジムなしの日のカロリーを引いて、ジムありの日数で割る
+    const restDaysTotalCalories = restDayTarget * restDays;
+    const gymDaysTotalCalories = weeklyTargetCalories - restDaysTotalCalories;
+    gymDayTarget = Math.round(
+      clamp(gymDaysTotalCalories / gymDays, bmr * 1.2)
+    );
+    
+    // 3. 検証：週の目標カロリーと一致するか確認（誤差10kcal以内ならOK）
+    const weeklyCalculated = (restDayTarget * restDays) + (gymDayTarget * gymDays);
+    const difference = weeklyTargetCalories - weeklyCalculated;
+    
+    // 差があれば微調整（ジムありの日に配分）
+    if (Math.abs(difference) > 10) {
+      const adjustmentPerGymDay = difference / gymDays;
+      gymDayTarget = Math.round(
+        clamp(gymDayTarget + adjustmentPerGymDay, bmr * 1.2)
+      );
+    }
   } else if (gymDays > 0) {
-    gymDeficitPerDay = dailyDeficit;
+    // 毎日ジムの場合：週の目標カロリーを7で割る
+    gymDayTarget = Math.round(
+      clamp(weeklyTargetCalories / 7, bmr * 1.2)
+    );
+    restDayTarget = gymDayTarget; // 同じ
   } else {
-    restDeficitPerDay = dailyDeficit;
+    // ジムなしの場合：週の目標カロリーを7で割る
+    restDayTarget = Math.round(
+      clamp(weeklyTargetCalories / 7, bmr * 1.2)
+    );
+    gymDayTarget = restDayTarget; // 同じ
   }
 
-  // ジム日の目標カロリー = TDEE + ジム消費 - 赤字
-  const gymDayTarget = Math.round(
-    clamp(tdee + gymCalorieBurn - gymDeficitPerDay, bmr * 1.2)
-  );
-  
-  // オフ日の目標カロリー = TDEE - 赤字
-  const restDayTarget = Math.round(
-    clamp(tdee - restDeficitPerDay, bmr * 1.2)
-  );
-
   return {
-    maintenanceKcal: Math.round(tdee),
+    maintenanceKcal: maintenanceKcal,
     gymDayTargetKcal: gymDayTarget,
     restDayTargetKcal: restDayTarget,
     bmr: Math.round(bmr),
@@ -467,11 +528,25 @@ export function buildSimulationData(
       );
     }
 
+    // 計画上の体重と体脂肪率（線形に目標に向かう）
+    const plannedWeight = totalDays > 0
+      ? settings.currentWeight + (settings.goalWeight - settings.currentWeight) * Math.min(1, i / totalDays)
+      : settings.currentWeight;
+    const plannedBodyFat = totalDays > 0
+      ? settings.currentBodyFat + (settings.goalBodyFat - settings.currentBodyFat) * Math.min(1, i / totalDays)
+      : settings.currentBodyFat;
+
     points.push({
       date: dateStr,
       simulatedScore: Math.max(0, Math.min(100, simulatedScore)),
       actualScore: actualScore !== null ? Math.max(0, Math.min(100, actualScore)) : null,
       plannedScore: Math.max(0, Math.min(100, plannedScore)),
+      actualWeight: actualWeight,
+      simulatedWeight: currentWeight,
+      plannedWeight: plannedWeight,
+      actualBodyFat: actualBodyFat,
+      simulatedBodyFat: currentBodyFat,
+      plannedBodyFat: plannedBodyFat,
     });
   }
 

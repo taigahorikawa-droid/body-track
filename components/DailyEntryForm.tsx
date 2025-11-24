@@ -11,27 +11,20 @@ type Props = {
 };
 
 export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [date, setDate] = useState(() => {
     const today = new Date();
     return today.toISOString().slice(0, 10);
   });
-  const [gymHours, setGymHours] = useState('0');
+  const [hasGym, setHasGym] = useState(false);
   const [calories, setCalories] = useState('');
   const [weight, setWeight] = useState('');
   const [bodyFat, setBodyFat] = useState('');
 
-  // ジム時間に基づいて目標カロリーを計算
+  // ジムあり/なしに基づいて目標カロリーを計算
   const getTargetCalories = (): number | null => {
     if (!settings) return null;
-    const gh = parseFloat(gymHours);
-    if (Number.isNaN(gh)) return null;
-    
-    // ジム時間が0より大きい場合はジム日の目標カロリー、0の場合はオフ日の目標カロリー
-    if (gh > 0) {
-      return settings.gymDayTargetKcal;
-    } else {
-      return settings.restDayTargetKcal;
-    }
+    return hasGym ? settings.gymDayTargetKcal : settings.restDayTargetKcal;
   };
 
   const targetCal = getTargetCalories();
@@ -40,18 +33,12 @@ export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
     e.preventDefault();
 
     const cal = parseFloat(calories);
-    const gh = parseFloat(gymHours);
     const w = weight ? parseFloat(weight) : undefined;
     const bf = bodyFat ? parseFloat(bodyFat) : undefined;
 
     // 数値の妥当性チェック
     if (!Number.isFinite(cal) || cal < 0 || cal > 10000) {
       alert('カロリーは0以上10000以下の数値で入力してください。');
-      return;
-    }
-    
-    if (!Number.isFinite(gh) || gh < 0 || gh > 24) {
-      alert('ジム時間は0以上24以下の数値で入力してください。');
       return;
     }
     
@@ -66,38 +53,71 @@ export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
       return;
     }
 
+    // ジムありの場合は初期設定の時間を使用
+    const gymHours = hasGym ? (settings?.gymSessionHours ?? 0) : 0;
+
     const newEntry: DailyEntry = {
-      id: `${date}-${Date.now()}`,
+      id: editingId || `${date}-${Date.now()}`,
       date,
       calories: cal,
-      gymHours: gh,
+      gymHours: gymHours,
       weight: w,
       bodyFat: bf,
     };
 
-    // 同じ日付のエントリーがあれば更新、なければ追加
-    const existingIndex = entries.findIndex(e => e.date === date);
+    // 編集モードの場合は既存のエントリーを更新、新規の場合は追加
     let newEntries: DailyEntry[];
-    if (existingIndex >= 0) {
-      newEntries = [...entries];
-      newEntries[existingIndex] = newEntry;
+    if (editingId) {
+      const existingIndex = entries.findIndex(e => e.id === editingId);
+      if (existingIndex >= 0) {
+        newEntries = [...entries];
+        newEntries[existingIndex] = newEntry;
+      } else {
+        // IDが見つからない場合は追加
+        newEntries = [...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date));
+      }
     } else {
-      newEntries = [...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date));
+      // 新規作成の場合、同じ日付のエントリーがあれば更新、なければ追加
+      const existingIndex = entries.findIndex(e => e.date === date);
+      if (existingIndex >= 0) {
+        newEntries = [...entries];
+        newEntries[existingIndex] = newEntry;
+      } else {
+        newEntries = [...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date));
+      }
     }
 
     onChange(newEntries);
 
-    // フォームをリセット（日付は今日のまま）
-    setCalories('');
-    setGymHours('0');
-    setWeight('');
-    setBodyFat('');
+    // フォームをリセット
+    handleCancel();
   };
 
   const handleDelete = (id: string) => {
     if (typeof window !== 'undefined' && window.confirm('このエントリーを削除しますか？')) {
       onChange(entries.filter(e => e.id !== id));
     }
+  };
+
+  const handleEdit = (entry: DailyEntry) => {
+    setEditingId(entry.id);
+    setDate(entry.date);
+    setHasGym(entry.gymHours > 0);
+    setCalories(entry.calories.toString());
+    setWeight(entry.weight?.toString() ?? '');
+    setBodyFat(entry.bodyFat?.toString() ?? '');
+    // スクロールしてフォームを表示
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancel = () => {
+    setEditingId(null);
+    const today = new Date();
+    setDate(today.toISOString().slice(0, 10));
+    setHasGym(false);
+    setCalories('');
+    setWeight('');
+    setBodyFat('');
   };
   const recentEntries = useMemo(
     () => [...entries]
@@ -131,21 +151,24 @@ export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
           />
         </div>
 
-        {/* ステップ2: ジム時間 → 目標カロリー表示 */}
+        {/* ステップ2: ジムあり/なし → 目標カロリー表示 */}
         <div className="space-y-1.5">
-          <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">ジム時間</label>
-          <select
-            className="input-field"
-            value={gymHours}
-            onChange={e => setGymHours(e.target.value)}
-            required
-          >
-            <option value="0">0（オフ日）</option>
-            <option value="0.5">0.5</option>
-            <option value="1">1</option>
-            <option value="1.5">1.5</option>
-            <option value="2">2</option>
-          </select>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+              checked={hasGym}
+              onChange={e => setHasGym(e.target.checked)}
+            />
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+              ジムあり
+              {settings && hasGym && (
+                <span className="ml-2 text-[10px] font-normal text-gray-400 normal-case">
+                  ({settings.gymSessionHours}h)
+                </span>
+              )}
+            </span>
+          </label>
         </div>
 
         {/* 目標カロリー表示 */}
@@ -155,7 +178,7 @@ export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
               <div>
                 <div className="text-xs text-gray-500 font-medium mb-1">目標カロリー</div>
                 <div className="text-[10px] text-gray-400">
-                  {parseFloat(gymHours) > 0 ? 'ジムありの日' : 'ジムなしの日'}
+                  {hasGym ? 'ジムありの日' : 'ジムなしの日'}
                 </div>
               </div>
               <div className="text-2xl font-light text-emerald-600">{targetCal}</div>
@@ -230,9 +253,20 @@ export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
           </div>
         </div>
 
-        <button type="submit" className="btn-primary w-full">
-          記録
-        </button>
+        <div className="flex gap-3">
+          <button type="submit" className="btn-primary flex-1">
+            {editingId ? '更新' : '記録'}
+          </button>
+          {editingId && (
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="btn-secondary"
+            >
+              キャンセル
+            </button>
+          )}
+        </div>
       </form>
 
       {recentEntries.length > 0 && (
@@ -253,13 +287,22 @@ export const DailyEntryForm = ({ entries, onChange, settings }: Props) => {
                     {entry.bodyFat && ` • 体脂肪 ${entry.bodyFat}%`}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(entry.id)}
-                  className="ml-4 text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors"
-                >
-                  削除
-                </button>
+                <div className="ml-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleEdit(entry)}
+                    className="text-[10px] font-medium text-emerald-600 hover:text-emerald-700 transition-colors"
+                  >
+                    編集
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(entry.id)}
+                    className="text-[10px] font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    削除
+                  </button>
+                </div>
               </div>
             ))}
           </div>

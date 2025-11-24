@@ -291,10 +291,6 @@ export const InitialSetupForm = ({ value, onChange }: Props) => {
           {value && (
             <div className="card px-5 py-4 space-y-3 text-xs">
               <div className="flex justify-between items-center gap-8">
-                <span className="text-gray-500 font-medium">維持カロリー</span>
-                <span className="font-medium text-gray-900">{value.maintenanceKcal} kcal</span>
-              </div>
-              <div className="flex justify-between items-center gap-8">
                 <span className="text-gray-500 font-medium">ジムありの日</span>
                 <span className="font-medium text-gray-900">{value.gymDayTargetKcal} kcal</span>
               </div>
