@@ -7,7 +7,9 @@ import { LocalStorageStorage } from './data/localStorageStorage';
 import { InitialSettings, DailyEntry } from '@/types';
 
 // 環境変数でSupabaseを使用するかどうかを切り替え
-const useSupabase = process.env.NEXT_PUBLIC_USE_SUPABASE === 'true';
+// ※確実にSupabase側へ保存されることを確認するため、いったん強制的にtrueにしています。
+//   問題なく動作することが確認できたら、元の1行に戻して .env.local のフラグで切り替える形でもOKです。
+const useSupabase = true;
 
 // ストレージインスタンスを取得する関数
 async function getStorage(): Promise<DataStorage> {

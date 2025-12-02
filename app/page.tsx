@@ -18,6 +18,7 @@ export default function HomePage() {
     settings,
     entries,
     isLoading: dataLoading,
+    error,
     updateSettings,
     updateEntries,
   } = useDataStorage(accessCode);
@@ -110,6 +111,15 @@ export default function HomePage() {
       {/* メインコンテンツ */}
       <main className="flex-1 overflow-y-auto pb-24 lg:pb-8">
         <div className="mx-auto w-full max-w-7xl px-6 py-8">
+          {/* エラー表示 */}
+          {error && (
+            <div className="mb-4">
+              <div className="card p-4 border-l-4 border-l-red-500">
+                <p className="text-xs text-red-600">{error}</p>
+              </div>
+            </div>
+          )}
+
           {/* デスクトップ: 3カラムレイアウト */}
           <div className="hidden lg:grid lg:grid-cols-3 lg:gap-8">
             {/* 左: 日次記録 */}
