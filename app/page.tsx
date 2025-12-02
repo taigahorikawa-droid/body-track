@@ -5,16 +5,14 @@ import { useState } from 'react';
 import { InitialSetupForm } from '@/components/InitialSetupForm';
 import { DailyEntryForm } from '@/components/DailyEntryForm';
 import { ChartSection } from '@/components/ChartSection';
-import { AuthForm } from '@/components/AuthForm';
-import { useAuth } from '@/lib/useAuth';
 import { useDataStorage } from '@/lib/useDataStorage';
 
 type Tab = 'setup' | 'entry' | 'chart';
 
 export default function HomePage() {
-  const { user, isLoading: authLoading, signOut, isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('entry');
-  const [authSuccess, setAuthSuccess] = useState(false);
+  const [inputCode, setInputCode] = useState('');
+  const [accessCode, setAccessCode] = useState<string | null>(null);
 
   const {
     settings,
@@ -22,20 +20,66 @@ export default function HomePage() {
     isLoading: dataLoading,
     updateSettings,
     updateEntries,
-  } = useDataStorage(user?.id || null);
+  } = useDataStorage(accessCode);
 
-  // 認証中は何も表示しない
-  if (authLoading) {
+  // アクセス番号が設定されていない場合は番号入力画面のみを表示
+  if (!accessCode) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
-        <div className="text-sm text-gray-500">読み込み中...</div>
+      <div className="flex min-h-screen items-center justify-center bg-white px-4">
+        <div className="w-full max-w-md">
+          <div className="card p-8">
+            <h1 className="text-xl font-normal tracking-wide text-gray-900 mb-4">
+              Body Track
+            </h1>
+            <p className="text-xs text-gray-500 mb-4">
+              データにアクセスするための番号を入力してください。
+            </p>
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const trimmed = inputCode.trim();
+                // 4桁の数字のみ許可
+                const isValid = /^\d{4}$/.test(trimmed);
+                if (!isValid) {
+                  alert('4桁の数字で入力してください');
+                  return;
+                }
+                setAccessCode(trimmed);
+              }}
+            >
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="access-code"
+                  className="block text-xs font-medium text-gray-500 uppercase tracking-wider"
+                >
+                  アクセス番号
+                </label>
+                <input
+                  id="access-code"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{4}"
+                  maxLength={4}
+                  minLength={4}
+                  className="input-field"
+                  value={inputCode}
+                  onChange={(e) => {
+                    const value = e.target.value.replace(/\D/g, '');
+                    setInputCode(value.slice(0, 4));
+                  }}
+                  placeholder="例: 1234"
+                  required
+                />
+              </div>
+              <button type="submit" className="btn-primary w-full">
+                この番号のデータにアクセス
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
     );
-  }
-
-  // 未認証の場合はログインフォームを表示
-  if (!isAuthenticated) {
-    return <AuthForm onSuccess={() => setAuthSuccess(true)} />;
   }
 
   return (
@@ -47,12 +91,17 @@ export default function HomePage() {
             Body Track
           </h1>
           <div className="flex items-center gap-4">
-            <span className="text-xs text-gray-500">{user?.email || 'ユーザー'}</span>
+            <span className="text-xs text-gray-500">
+              番号: {accessCode}
+            </span>
             <button
-              onClick={signOut}
+              onClick={() => {
+                setAccessCode(null);
+                setInputCode('');
+              }}
               className="btn-secondary text-xs px-4 py-1.5"
             >
-              ログアウト
+              番号を変更
             </button>
           </div>
         </div>

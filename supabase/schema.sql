@@ -2,8 +2,9 @@
 -- SupabaseダッシュボードのSQL Editorで実行してください
 
 -- settings テーブル
+-- 4桁番号などの任意の文字列キーで管理するため、user_id を TEXT に変更
 CREATE TABLE IF NOT EXISTS settings (
-  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id TEXT PRIMARY KEY,
   current_weight NUMERIC(5, 1) NOT NULL,
   current_body_fat NUMERIC(5, 1) NOT NULL,
   goal_weight NUMERIC(5, 1) NOT NULL,
@@ -22,9 +23,10 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- entries テーブル
+-- 4桁番号などの任意の文字列キーで管理するため、user_id を TEXT に変更
 CREATE TABLE IF NOT EXISTS entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
   date DATE NOT NULL,
   calories INTEGER NOT NULL,
   gym_hours NUMERIC(3, 1) NOT NULL,
@@ -35,38 +37,39 @@ CREATE TABLE IF NOT EXISTS entries (
   UNIQUE(user_id, date)
 );
 
--- Row Level Security (RLS) を有効化
+-- Row Level Security (RLS)
+-- ログインベースではなく「番号を知っている人は誰でもアクセスOK」という前提に変更
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE entries ENABLE ROW LEVEL SECURITY;
 
--- RLS ポリシー: ユーザーは自分のデータのみアクセス可能
-CREATE POLICY "Users can view their own settings"
+-- 認証情報に依存せず、すべての行へのアクセスを許可するポリシー
+CREATE POLICY "Anyone can view settings with code"
   ON settings FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (true);
 
-CREATE POLICY "Users can insert their own settings"
+CREATE POLICY "Anyone can insert settings with code"
   ON settings FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+  WITH CHECK (true);
 
-CREATE POLICY "Users can update their own settings"
+CREATE POLICY "Anyone can update settings with code"
   ON settings FOR UPDATE
-  USING (auth.uid() = user_id);
+  USING (true);
 
-CREATE POLICY "Users can view their own entries"
+CREATE POLICY "Anyone can view entries with code"
   ON entries FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (true);
 
-CREATE POLICY "Users can insert their own entries"
+CREATE POLICY "Anyone can insert entries with code"
   ON entries FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+  WITH CHECK (true);
 
-CREATE POLICY "Users can update their own entries"
+CREATE POLICY "Anyone can update entries with code"
   ON entries FOR UPDATE
-  USING (auth.uid() = user_id);
+  USING (true);
 
-CREATE POLICY "Users can delete their own entries"
+CREATE POLICY "Anyone can delete entries with code"
   ON entries FOR DELETE
-  USING (auth.uid() = user_id);
+  USING (true);
 
 -- インデックスを作成（パフォーマンス向上）
 CREATE INDEX IF NOT EXISTS idx_entries_user_id ON entries(user_id);

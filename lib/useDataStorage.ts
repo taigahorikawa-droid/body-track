@@ -68,7 +68,7 @@ export function useDataStorage(userId: string | null) {
 
   const updateSettings = useCallback(async (newSettings: InitialSettings) => {
     if (!userId) {
-      throw new Error('ログインが必要です');
+      throw new Error('番号の入力が必要です');
     }
 
     try {
@@ -89,7 +89,7 @@ export function useDataStorage(userId: string | null) {
 
   const updateEntries = useCallback(async (newEntries: DailyEntry[]) => {
     if (!userId) {
-      throw new Error('ログインが必要です');
+      throw new Error('番号の入力が必要です');
     }
 
     try {
