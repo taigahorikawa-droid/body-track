@@ -3,7 +3,7 @@
 
 import { useMemo } from 'react';
 import { InitialSettings, DailyEntry } from '@/types';
-import { buildSimulationData, calculateProgressRate, compareWithPlan } from '@/lib/simulation';
+import { buildSimulationData } from '@/lib/simulation';
 import {
   LineChart,
   Line,
@@ -35,6 +35,12 @@ export const ChartSection = ({ settings, entries }: Props) => {
   const data = useMemo(
     () => buildSimulationData(settings, entries, 90),
     [settings, entries]
+  );
+
+  // 予測データが含まれているか（直近1週間分の履歴が十分な場合のみ）
+  const hasPrediction = useMemo(
+    () => data.some(d => d.hasPrediction),
+    [data]
   );
 
   // 今日の日付を取得
@@ -96,26 +102,6 @@ export const ChartSection = ({ settings, entries }: Props) => {
     };
   }, [settings.currentBodyFat, settings.goalBodyFat, currentBodyFat, data]);
 
-  // 達成率を計算
-  const progressRate = useMemo(
-    () => calculateProgressRate(
-      currentWeight,
-      currentBodyFat,
-      settings.goalWeight,
-      settings.goalBodyFat,
-      settings.currentWeight,
-      settings.currentBodyFat
-    ),
-    [currentWeight, currentBodyFat, settings.goalWeight, settings.goalBodyFat, settings.currentWeight, settings.currentBodyFat]
-  );
-
-  // 計画との比較
-  const comparison = useMemo(
-    () => compareWithPlan(settings, entries),
-    [settings, entries]
-  );
-
-
   // チャート用の共通設定
   const chartConfig = {
     margin: { top: 5, right: 10, bottom: 5, left: 0 },
@@ -151,8 +137,8 @@ export const ChartSection = ({ settings, entries }: Props) => {
 
   return (
     <section className="space-y-8">
-      {/* 主要メトリクスカード（スマホでも横3列） */}
-      <div className="grid grid-cols-3 gap-3 sm:gap-6">
+      {/* 主要メトリクスカード（体重・体脂肪） */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-6">
         <div className="card p-4 sm:p-6">
           <div className="metric-label mb-2 sm:mb-3 text-[10px] sm:text-xs">現状体重</div>
           <div className="metric-value mb-2 sm:mb-4 text-2xl sm:text-4xl">{currentWeight.toFixed(1)}</div>
@@ -193,99 +179,9 @@ export const ChartSection = ({ settings, entries }: Props) => {
             );
           })()}
         </div>
-        <div className="card p-4 sm:p-6">
-          <div className="metric-label mb-2 sm:mb-3 text-[10px] sm:text-xs">総合スコア</div>
-          <div className="text-2xl sm:text-4xl font-light tracking-tight text-emerald-600 mb-2 sm:mb-4">{progressRate.toFixed(1)}</div>
-          <div className="text-[10px] sm:text-xs text-gray-500 font-medium mb-1 sm:mb-2">
-            {progressRate >= 100 ? '目標達成' : progressRate >= 50 ? '改善中' : '要改善'}
-          </div>
-          <div className={`text-[10px] sm:text-xs font-medium ${
-            comparison.isOnSchedule ? 'text-emerald-600' : 'text-orange-500'
-          }`}>
-            {comparison.isOnSchedule ? '計画通り' : '計画より遅れ'}
-          </div>
-        </div>
       </div>
-
-      {/* 計画比較表示 */}
-      {!comparison.isOnSchedule && (
-        <div className="card p-4 sm:p-5 border-l-4 border-l-orange-500">
-          <div className="text-xs sm:text-sm font-medium text-gray-900 mb-2">計画より遅れています</div>
-          <div className="text-[10px] sm:text-xs text-gray-600 mb-1">
-            実際の進捗: {comparison.actualProgress.toFixed(1)}% / 計画上の進捗: {comparison.plannedProgress.toFixed(1)}%
-            {comparison.daysBehind && ` (約${comparison.daysBehind}日遅れ)`}
-          </div>
-          <div className="text-[10px] sm:text-xs text-gray-500">
-            カロリー摂取量や運動量を見直してください。
-          </div>
-        </div>
-      )}
-
-      {/* チャート（横3列：スコア、体重、体脂肪） */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        {/* スコア推移 */}
-        <div className="card p-4 sm:p-6">
-          <div className="mb-4 sm:mb-6">
-            <div className="text-[10px] sm:text-xs text-gray-500 font-medium mb-1">スコア推移</div>
-            <div className="text-[9px] sm:text-xs text-gray-400">
-              50: 現状 / 100: 目標達成
-            </div>
-          </div>
-          <div className="h-64 sm:h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={chartConfig.margin}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                <XAxis {...chartConfig.xAxis} />
-                <YAxis
-                  domain={[0, 100]}
-                  width={35}
-                  tick={{ fontSize: 9, fill: '#9ca3af' }}
-                  tickFormatter={(value) => {
-                    if (value === 50) return '50';
-                    if (value === 100) return '100';
-                    return '';
-                  }}
-                  axisLine={{ stroke: '#e5e7eb' }}
-                />
-                <Tooltip {...chartConfig.tooltip} />
-                <Legend {...chartConfig.legend} />
-                <ReferenceLine
-                  x={todayStr}
-                  stroke="#ef4444"
-                  strokeWidth={1.5}
-                  label={{ value: "今日", position: "top", fontSize: 9, fill: '#ef4444' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="plannedScore"
-                  name="計画"
-                  stroke="#9ca3af"
-                  strokeDasharray="4 4"
-                  dot={false}
-                  strokeWidth={1.5}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="simulatedScore"
-                  name="予想"
-                  stroke="#3b82f6"
-                  dot={false}
-                  strokeWidth={2}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="actualScore"
-                  name="実測"
-                  stroke="#10b981"
-                  dot={{ r: 2, fill: '#10b981', strokeWidth: 1.5, stroke: '#fff' }}
-                  connectNulls={false}
-                  strokeWidth={2}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
+      {/* チャート（体重・体脂肪） */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* 体重推移 */}
         <div className="card p-4 sm:p-6">
           <div className="mb-4 sm:mb-6">
@@ -327,14 +223,16 @@ export const ChartSection = ({ settings, entries }: Props) => {
                   dot={false}
                   strokeWidth={1.5}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="simulatedWeight"
-                  name="予想"
-                  stroke="#3b82f6"
-                  dot={false}
-                  strokeWidth={2}
-                />
+                {hasPrediction && (
+                  <Line
+                    type="monotone"
+                    dataKey="simulatedWeight"
+                    name="予想"
+                    stroke="#3b82f6"
+                    dot={false}
+                    strokeWidth={2}
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="actualWeight"
@@ -390,14 +288,16 @@ export const ChartSection = ({ settings, entries }: Props) => {
                   dot={false}
                   strokeWidth={1.5}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="simulatedBodyFat"
-                  name="予想"
-                  stroke="#3b82f6"
-                  dot={false}
-                  strokeWidth={2}
-                />
+                {hasPrediction && (
+                  <Line
+                    type="monotone"
+                    dataKey="simulatedBodyFat"
+                    name="予想"
+                    stroke="#3b82f6"
+                    dot={false}
+                    strokeWidth={2}
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="actualBodyFat"

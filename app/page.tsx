@@ -1,7 +1,7 @@
 // app/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { InitialSetupForm } from '@/components/InitialSetupForm';
 import { DailyEntryForm } from '@/components/DailyEntryForm';
 import { ChartSection } from '@/components/ChartSection';
@@ -22,6 +22,19 @@ export default function HomePage() {
     updateSettings,
     updateEntries,
   } = useDataStorage(accessCode);
+
+  // アカウント有無に応じて初期表示タブを自動切り替え
+  useEffect(() => {
+    if (!accessCode || dataLoading) return;
+
+    // まだ何もデータがない番号 → 初期設定タブへ
+    if (!settings && entries.length === 0) {
+      setActiveTab('setup');
+    } else {
+      // 既にアカウント（設定 or 記録）がある番号 → 記録タブへ
+      setActiveTab('entry');
+    }
+  }, [accessCode, dataLoading, settings, entries]);
 
   // アクセス番号が設定されていない場合は番号入力画面のみを表示
   if (!accessCode) {
@@ -111,6 +124,15 @@ export default function HomePage() {
       {/* メインコンテンツ */}
       <main className="flex-1 overflow-y-auto pb-24 lg:pb-8">
         <div className="mx-auto w-full max-w-7xl px-6 py-8">
+          {/* データ読み込み中 */}
+          {dataLoading && (
+            <div className="mb-4">
+              <div className="card p-4">
+                <p className="text-xs text-gray-500">データを読み込んでいます...</p>
+              </div>
+            </div>
+          )}
+
           {/* エラー表示 */}
           {error && (
             <div className="mb-4">

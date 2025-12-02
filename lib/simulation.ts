@@ -12,6 +12,8 @@ export type ChartPoint = {
   actualBodyFat?: number | null;
   simulatedBodyFat?: number;
   plannedBodyFat?: number;
+  // 予測値が含まれるポイントかどうか（未来日＆十分な履歴データがある場合）
+  hasPrediction?: boolean;
 };
 
 export type ProgressComparison = {
@@ -105,129 +107,117 @@ function calculateWeeksUntilTarget(targetDate: string): number {
 }
 
 /**
- * 改善されたカロリープラン計算：
- * - ミフリン・セイントジョア式で基礎代謝（BMR）を計算
- * - 活動係数を使ってTDEE（総消費カロリー）を計算
- * - 目標達成日から週数を計算
- * - 安全な減量ペース（週0.5-1kg）と増量ペース（週0.25-0.5kg）を考慮
- * - カロリーが低すぎないようにBMRの1.2倍を下限に設定
+ * カロリープラン計算（ユーザー指定ロジック）
+ *
+ * 1. 日数 N, 体重変化 ΔW, 1日あたり体重変化 ΔW_day
+ * 2. 1日あたり必要カロリー差 ΔE_day = ΔW_day × 7700
+ * 3. BMR（Mifflin-St Jeor）
+ * 4. オフ日メンテ: C_rest_maint = BMR × 1.3
+ * 5. ジム消費: E_gym = 6 × W0 × Tgym
+ * 6. ジム日メンテ: C_gym_maint = C_rest_maint + E_gym
+ * 7. 実際に食べるカロリー:
+ *    - C_rest = C_rest_maint + ΔE_day
+ *    - C_gym  = C_gym_maint  + ΔE_day
+ *
+ * さらに、安全面チェックとして ΔE_day や週あたりの体重変化が大きすぎる場合は
+ * warnings にメッセージを入れる。
  */
 export function computeCaloriePlan(input: PlanInput) {
-  // 基礎代謝（BMR）を計算
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const target = new Date(input.targetDate + 'T00:00:00Z');
+
+  // 日数 N（最低1日）
+  const diffMs = target.getTime() - today.getTime();
+  const diffDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  const N = diffDays;
+
+  // 体重変化
+  const deltaW = input.goalWeight - input.currentWeight; // kg
+  const deltaWDay = deltaW / N; // kg/日
+
+  // 1日あたりカロリー差
+  const deltaEDay = deltaWDay * 7700; // kcal/日
+
+  // BMR（Mifflin-St Jeor）
   const bmr = calculateBMR(input.currentWeight, input.height, input.age, input.gender);
-  
-  // 活動係数を取得
-  const activityFactor = getActivityFactor(input.gymSessionsPerWeek, input.gymSessionHours);
-  
-  // TDEE（総消費カロリー）を計算
-  const tdee = bmr * activityFactor;
-  
-  // 目標達成日までの週数を計算
-  const weeks = calculateWeeksUntilTarget(input.targetDate);
 
-  // 体重の変化量を計算
-  const weightChange = input.goalWeight - input.currentWeight;
-  const isWeightLoss = weightChange < 0;
-  const isWeightGain = weightChange > 0;
+  // メンテナンス（オフ日）
+  const cRestMaint = bmr * 1.3;
 
-  const gymDays = Math.max(0, Math.min(7, input.gymSessionsPerWeek));
-  const restDays = 7 - gymDays;
+  // ジム消費（MET=6）
+  const eGym = 6 * input.currentWeight * input.gymSessionHours;
 
-  // ジム日の消費カロリーを考慮（ジム1時間あたり約300-600kcal）
-  const gymCalorieBurn = input.gymSessionHours * 400; // 1時間あたり400kcal（中程度の運動）
+  // ジム日メンテ
+  const cGymMaint = cRestMaint + eGym;
 
-  // 維持カロリー = TDEE（総消費カロリー）
-  // これは現在の体重を維持するために必要な1日の総消費カロリー
-  const maintenanceKcal = Math.round(tdee);
+  // 実際に食べるカロリー
+  let cRest = cRestMaint + deltaEDay;
+  let cGym = cGymMaint + deltaEDay;
 
-  // 週単位で考える：
-  // 1. 週あたりの維持カロリー = TDEE × 7日
-  const weeklyMaintenance = tdee * 7;
-  
-  // 2. 週あたりのジム消費カロリー = ジム消費 × ジム日数
-  const weeklyGymBurn = gymCalorieBurn * gymDays;
-  
-  // 3. 週あたりの総消費カロリー = 維持カロリー + ジム消費
-  const weeklyTotalBurn = weeklyMaintenance + weeklyGymBurn;
-  
-  // 4. 週あたりの体重変化目標とカロリー調整を計算
-  let weeklyCalorieAdjustment = 0; // 赤字（減量）または黒字（増量）
-  
-  if (isWeightLoss) {
-    // 減量の場合
-    const totalLoss = Math.abs(weightChange);
-    const weeklyLoss = totalLoss / weeks; // kg/週
-    const safeWeeklyLoss = Math.min(Math.max(weeklyLoss, 0.5), 1.0); // 0.5-1kg/週に制限
-    // 週あたりのカロリー赤字（脂肪1kg ≒ 7700kcal）
-    weeklyCalorieAdjustment = -safeWeeklyLoss * 7700; // マイナス（赤字）
-  } else if (isWeightGain) {
-    // 増量の場合
-    const totalGain = weightChange;
-    const weeklyGain = totalGain / weeks; // kg/週
-    const safeWeeklyGain = Math.min(Math.max(weeklyGain, 0.25), 0.5); // 0.25-0.5kg/週に制限（安全な増量ペース）
-    // 週あたりのカロリー黒字（筋肉1kg ≒ 5500-7000kcal、脂肪も含めて約6000kcal）
-    weeklyCalorieAdjustment = safeWeeklyGain * 6000; // プラス（黒字）
+  // 極端に低すぎるのを防ぐための下限（BMRの1.1倍）
+  const minIntake = bmr * 1.1;
+  cRest = Math.max(cRest, minIntake);
+  cGym = Math.max(cGym, minIntake);
+
+  // 警告ロジック
+  const warnings: string[] = [];
+
+  const weeklyDeltaW = deltaWDay * 7; // kg/週
+
+  // 減量ペースの警告
+  if (weeklyDeltaW < -1) {
+    warnings.push(
+      '減量ペースがかなり急です（週1kg超）。目標日を少し遠くするか、目標体重を少し緩めることをおすすめします。'
+    );
+  } else if (weeklyDeltaW < -0.8) {
+    warnings.push(
+      '減量ペースがややハードです（週0.8〜1kg）。体調を見ながら無理のない範囲で進めてください。'
+    );
   }
-  // 体重維持の場合は weeklyCalorieAdjustment = 0 のまま
-  
-  // 5. 週あたりの目標カロリー = 総消費カロリー + カロリー調整（赤字または黒字）
-  const weeklyTargetCalories = weeklyTotalBurn + weeklyCalorieAdjustment;
-  
-  // 6. ジムありの日とジムなしの日で配分（週単位で考える）
-  // 基本的な考え方：
-  // - 維持するには：ジムなしの日 = TDEE、ジムありの日 = TDEE + ジム消費
-  // - 増量・減量の調整を週単位で配分
-  let gymDayTarget: number;
-  let restDayTarget: number;
-  
-  if (gymDays > 0 && restDays > 0) {
-    // 週単位で配分する方法：
-    // 1. まず、ジムなしの日の目標カロリーを計算
-    //    基本はTDEE、増減量の調整を配分
-    const dailyAdjustment = weeklyCalorieAdjustment / 7;
-    const restDayAdjustment = dailyAdjustment * 0.6; // ジムなしの日に60%配分
-    restDayTarget = Math.round(
-      clamp(tdee + restDayAdjustment, bmr * 1.2)
+
+  // 増量ペースの警告
+  if (weeklyDeltaW > 0.5) {
+    warnings.push(
+      '増量ペースがかなり速いです（週0.5kg超）。脂肪の増加が大きくなる可能性があります。'
     );
-    
-    // 2. 次に、ジムありの日の目標カロリーを計算
-    //    週の目標カロリーからジムなしの日のカロリーを引いて、ジムありの日数で割る
-    const restDaysTotalCalories = restDayTarget * restDays;
-    const gymDaysTotalCalories = weeklyTargetCalories - restDaysTotalCalories;
-    gymDayTarget = Math.round(
-      clamp(gymDaysTotalCalories / gymDays, bmr * 1.2)
+  } else if (weeklyDeltaW > 0.3) {
+    warnings.push(
+      '増量ペースがやや速めです（週0.3〜0.5kg）。体脂肪の増え方に注意しながら進めてください。'
     );
-    
-    // 3. 検証：週の目標カロリーと一致するか確認（誤差10kcal以内ならOK）
-    const weeklyCalculated = (restDayTarget * restDays) + (gymDayTarget * gymDays);
-    const difference = weeklyTargetCalories - weeklyCalculated;
-    
-    // 差があれば微調整（ジムありの日に配分）
-    if (Math.abs(difference) > 10) {
-      const adjustmentPerGymDay = difference / gymDays;
-      gymDayTarget = Math.round(
-        clamp(gymDayTarget + adjustmentPerGymDay, bmr * 1.2)
-      );
-    }
-  } else if (gymDays > 0) {
-    // 毎日ジムの場合：週の目標カロリーを7で割る
-    gymDayTarget = Math.round(
-      clamp(weeklyTargetCalories / 7, bmr * 1.2)
-    );
-    restDayTarget = gymDayTarget; // 同じ
-  } else {
-    // ジムなしの場合：週の目標カロリーを7で割る
-    restDayTarget = Math.round(
-      clamp(weeklyTargetCalories / 7, bmr * 1.2)
-    );
-    gymDayTarget = restDayTarget; // 同じ
   }
+
+  // 1日あたりカロリー差が極端な場合の警告
+  if (deltaEDay < -1000) {
+    warnings.push(
+      '1日のカロリー赤字が1000kcalを超えています。かなりハードな設定なので、もう少し目標日を伸ばすか、目標体重を緩めることを検討してください。'
+    );
+  } else if (deltaEDay < -800) {
+    warnings.push(
+      '1日のカロリー赤字が800kcalを超えています。継続が難しく感じたら、設定を少し緩めるのがおすすめです。'
+    );
+  }
+
+  if (deltaEDay > 600) {
+    warnings.push(
+      '1日のカロリープラスが600kcalを超えています。脂肪の増加が大きくなる可能性があるので、目標設定を少し見直してもよいかもしれません。'
+    );
+  } else if (deltaEDay > 400) {
+    warnings.push(
+      '1日のカロリープラスが400kcalを超えています。増量ペースが速めなので、体脂肪の推移もチェックしながら進めてください。'
+    );
+  }
+
+  // maintenanceKcal は「オフ日のメンテナンス」を採用
+  const maintenanceKcal = Math.round(cRestMaint);
 
   return {
-    maintenanceKcal: maintenanceKcal,
-    gymDayTargetKcal: gymDayTarget,
-    restDayTargetKcal: restDayTarget,
+    maintenanceKcal,
+    gymDayTargetKcal: Math.round(cGym),
+    restDayTargetKcal: Math.round(cRest),
     bmr: Math.round(bmr),
+    deltaEDay,
+    warnings,
   };
 }
 
@@ -369,6 +359,29 @@ export function buildSimulationData(
   const targetDate = parseDate(settings.targetDate);
   const totalDays = Math.ceil((targetDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
 
+  // ---- 直近1週間のパフォーマンスから平均カロリー差を算出 ----
+  const maintenance = settings.maintenanceKcal;
+
+  let hasPredictionSource = false;
+  let avgDeltaKcal: number | null = null;
+
+  if (sortedEntries.length > 0 && maintenance > 0) {
+    const latestEntryDate = parseDate(sortedEntries[sortedEntries.length - 1].date);
+    const weekAgo = addDays(latestEntryDate, -6);
+
+    const recentEntries = sortedEntries.filter(e => {
+      const d = parseDate(e.date);
+      return d >= weekAgo && d <= latestEntryDate;
+    });
+
+    if (recentEntries.length >= 7) {
+      const deltas = recentEntries.map(e => e.calories - maintenance);
+      const sum = deltas.reduce((acc, v) => acc + v, 0);
+      avgDeltaKcal = sum / deltas.length;
+      hasPredictionSource = true;
+    }
+  }
+
   const points: ChartPoint[] = [];
 
   let currentWeight = settings.currentWeight;
@@ -426,8 +439,22 @@ export function buildSimulationData(
       ? settings.gymDayTargetKcal
       : settings.restDayTargetKcal;
 
-    const usedCalories = dailyCalories ?? plannedCalories;
-    const maintenance = settings.maintenanceKcal;
+    // 直近1週間の平均パフォーマンスからシミュレーションするかどうか
+    const isFuture = date > today;
+    const canPredict = hasPredictionSource && avgDeltaKcal !== null;
+
+    const usedCalories = (() => {
+      // 実績がある日は常に実績を優先
+      if (dailyCalories !== null && dailyCalories !== undefined) {
+        return dailyCalories;
+      }
+      // 未来日かつ十分な履歴がある場合は「平均的な1日のカロリー差」を使ってシミュレーション
+      if (isFuture && canPredict) {
+        return maintenance + avgDeltaKcal!;
+      }
+      // それ以外は計画値を使用
+      return plannedCalories;
+    })();
 
     if (maintenance > 0 && usedCalories) {
       const deltaKcal = usedCalories - maintenance;
@@ -547,6 +574,7 @@ export function buildSimulationData(
       actualBodyFat: actualBodyFat,
       simulatedBodyFat: currentBodyFat,
       plannedBodyFat: plannedBodyFat,
+      hasPrediction: isFuture && canPredict,
     });
   }
 

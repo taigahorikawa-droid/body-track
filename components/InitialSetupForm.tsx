@@ -93,6 +93,15 @@ export const InitialSetupForm = ({ value, onChange }: Props) => {
       gymSessionsPerWeek: gspw,
     });
 
+    // 設定がかなりハード / 速すぎる場合の警告を表示
+    if (plan.warnings && plan.warnings.length > 0) {
+      alert(
+        '設定された目標はかなりハードな可能性があります。\n\n' +
+        plan.warnings.map(w => `・${w}`).join('\n') +
+        '\n\n体調や生活リズムに合わせて、目標日や目標体重を少し緩めることも検討してください。'
+      );
+    }
+
     const settings: InitialSettings = {
       currentWeight: cw,
       currentBodyFat: Number.isNaN(cbf) ? 0 : cbf,
